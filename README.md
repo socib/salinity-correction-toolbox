@@ -1,7 +1,5 @@
 # salinity-correction-toolbox
-Set of matlab scripts to identify correction coefficients for salinity data taken from CTD rossette and glider
-
-The plot_socib_rv_adcp is a set of python scripts and functions developed at SOCIB to plot the data collected by a SBE911+ CTD mounted onboard the SOCIB Research Vessel. They are able to plot the main variables stored into the cnv files and plot them interpolate the profiles over the longitude dimension.
+Set of matlab scripts to identify correction coefficients for salinity data taken from CTD rossette and glider.
 
 ## Prerequisites:
 The following libraries need to be added into salinity-correction-toolbox/ext/ directory:
@@ -14,8 +12,8 @@ The following libraries need to be added into salinity-correction-toolbox/ext/ d
 
    
 ## The following features are already implemented in the toolbox:
-ctd-correction-pack
-glider-correction-pack
+- ctd-correction-pack
+- glider-correction-pack
         
 
 ## The following features are planned or in development:
