@@ -14,6 +14,7 @@ The following libraries need to be added into salinity-correction-toolbox/ext/ d
 ## The following features are already implemented in the toolbox:
 - ctd-correction-pack
 - glider-correction-pack
+- argo-correction-pack
         
 
 ## The following features are planned or in development:
