@@ -1,0 +1,13 @@
+function [ctdNcFilesList, CtdDataFile, Campaign, TESTdat] = phase_2_load_ctd_corrected_data(ctdInstrumentID)
+
+global GSCPath
+
+%1.a list and load nc files available 
+% list CTD nc files available in thredds, store it in a mat file and load
+% it later
+%list_nc_files(ctdInstrumentID, 'ctdCorrNcFilesList.mat')
+[ctdNcFilesList, CtdCorrDataFile] = load_nc_files_list(GSCPath.listThreddsData, 'ctdCorrNcFilesList.mat', 'ctd');
+
+
+
+end

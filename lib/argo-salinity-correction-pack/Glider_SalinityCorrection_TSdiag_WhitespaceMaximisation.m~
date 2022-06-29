@@ -1,0 +1,528 @@
+function Glider_SalinityCorrection_TSdiag_WhitespaceMaximisation
+%
+%
+% For further information, refer to: *insert link to future document here*,
+% and the corresponding readme_gliderCorrection.txt.
+%
+% Code Description: This code outlines the process to "correct" glider
+% conductivity (and therefore salinity and potential temperature) using
+% corrected ship CTD data. See readme_gliderCorrection.txt for detailed
+% description of code and user input requirements.
+
+%
+% INPUT: 1. netcdf glider data from http://thredds.socib.es
+%        2. structured array of corrected ship half metre binned CTD data
+%
+% OUTPUT: 'TESTDAT': structured array of test (glider) data with corrected
+%   conductivity, corrected salinity and corrected potential temperature.
+%   metadata providing informations regarding: correction coefficient, error
+%   estimate, background CTD data and their corresponding correction standard
+%   deviations, and a correction method summary. 
+%
+% Author: Krissy Reeve (kreeve@socib.es)
+% Date of creation: 23/06/2016.
+%
+% nested functions:
+% 1. mapWMED(N,S,E,W); Creates map of coastline on which data can be plotted to
+% 2. [SEASON,MNTHS] = SEASON_of_Cruise(Campaign,'GLIDER',STARTdate); Determines the season of the input data based on start date of campaign and lists the months that define that season.
+% 3. TSdiags_from_Struct(withGlider,GliderCorr,TESTdat,depNUM_glider); Creates TS diagram of corrected half metre ship CTD data (user selects which cruises to plot) and has the option of 
+%    plotting over the top with uncorrected and corrected glider data, and of deciding which data should be plotted on the very top layer.
+% 4. [Campaign,Pname_in_comp] = Matching_Cruise_recommendation(Campaign,TYPE,bgrndRegions,first10); Based on user input options of which cruises to use (eg all cruises in one
+%     season or year, or the closest corresponding cruise, etc) provides the ship campaign name of the recomended data for the background data by
+%     which the test (glider) data will be compared and corrected to.
+% 5. [guess, value, iterations] = optim3steps(func, init_guess, step_major, step_minor, step_miniscule, max_iterations, varargin)
+% 6. [area] = imageArea_V2(A,  condGlider, tempCondCellGlider, pressureGlider, ptempGlider, salinityShip, ptempShip, imageDir,AXISlims,counter)
+%
+% Matlab packages:
+% 1. seawater sw_ package (for salinity/conductivity/potential temperature conversions)
+% 2. gsw_ package  (for salinity/conductivity/potential temperature conversions)
+% 3. Mapping toolbox 
+
+%******************************************************************************************************************************************************************************
+%% i: relevant paths for nested functions:
+
+main_path = '/home/cmunoz/Documents/programming/MATLAB/MATLAB_SOCIB/AUV/Glider/CODE/gliderSalCorrection_pack/'
+
+%% 1. Pick a cruise campaign/file location and load corrected backround data for comparison/correction:
+%
+%1.a list nc files available
+list_glider_ncfiles
+
+% 1.a where is the data stored: web, network or pc?
+% This gives us the option of selection the pathname of the input files
+% from the SOCIB network, on the pc documents or to manually find the correct
+% pathway:
+URLglider = 'http://www.socib.es/?seccion=observingFacilities&facility=glider';
+web(URLglider,'-browser');
+msgbox('On socib.es, navigate to glider campaign mission in "OPeNDAP Dataset Access Form" to apply correction to; copy and paste url of the nc file (excluding the ".html")')
+pause
+gliderDataFilename = inputdlg('Paste URL of glider data here:','URL glider data',1);
+
+% 1.b output path and file names:
+FigsPname_out = 'AUV/Glider/FIGS/gliderSalCorrection/';
+Pname_out = 'AUV/Glider/DATA/CTD_correction_files/Thredds/';
+Pname_outMeta = 'AUV/Glider/DATA/CTD_correction_files/Correction_meta_details/';
+tmpry = strsplit(gliderDataFilename{1},'/');
+Fname_out = strrep(tmpry{end},'.nc','_CORRECTED');
+
+% 1.c load glider to be calibrated
+[data, meta, global_meta] = loadnc(gliderDataFilename{1});
+%glider campaign name:
+tmpry=strsplit(gliderDataFilename{1},{'/','.nc'});
+Campaign.Test = tmpry{length(tmpry)-1};
+clear tmpry
+
+% 1.d load background corrected half metre ship data, and, eventually if deemed neccessary, corrected glider data:
+buttonBGRND = questdlg('Are comparable background data available for this glider mission? (if not, use the gliders previous correction coefficient)','Background data availablility?','YES','NO','YES');
+if strcmpi(buttonBGRND,'NO')==1
+    GliderCorrect_known_Coeff(Campaign,gliderDataFilename, data, meta, global_meta, FigsPname_out,Pname_out,Pname_outMeta,Fname_out)
+    return
+end
+
+% Pname_in = 'SHIP/DATA/CTD/CTD_correction_files/';
+Pname_in = '/opt/MATLAB/ctd_salinity_correction_pack/out_test/data/correction_data/correction_files/corrected_mat/ctd_all_data_halfm_corrected/'
+Fname_in = 'SHIP_allDATA_halfm_corrected';
+load([Pname_in,Fname_in])
+buttonBGRND = questdlg('Also include corrected glider data in background comparison?','Background data: ship and glider?','YES','NO','NO');
+if strcmpi(buttonBGRND,'YES')==1
+    errordlg('NEED TO FIGURE OUT HOW TO INCORPORATE CORRECTED GLIDER DATA INTO THIS CODE - OR CALL NEW FUNCTION COMPLETELY!','TBC...')
+    return
+end
+% cruise names for background comparison to glider:
+FLDS = fieldnames(CTD);
+disp(FLDS)
+%... and the start and end dates of the glider campaign:
+STARTdate = datestr((min(data.time)./(60^2*24))+datenum(1970,01,01));
+ENDdate   = datestr((max(data.time)./(60^2*24))+datenum(1970,01,01));
+disp([STARTdate; ENDdate])
+
+
+% 1.e Create map of glider trajectory, for comparison to background data:
+mine = m_mapWMED(42,35,5,-5);
+m_plot(data.longitude,data.latitude,'k.','linewidth',2);
+%plotm(data.latitude,data.longitude,'k.','linewidth',2);
+title('Glider cruise path (black)','fontsize',16,'fontweight','b')
+xhh = get(gca,'title');
+set(xhh,'Position',get(xhh,'Position') + [0 0.004 0])
+
+%******************************************************************************************************************************************************************************
+%% 2. provide recomendations of background data for the glider correction...
+% should this be limited to ship data or should corrected glider data also
+% be an option for the background data?
+% The recommendations are based on: 
+%       A) Location
+%       B) Time
+
+% 2a) Test (glider) data Location (this comes from the meta data of the netcdf glider data that is downloaded from thredds:
+for n= 1:length(global_meta.attributes)
+    if strcmpi(global_meta.attributes(n).name,'geospatial_lat_min')==1
+        break
+    end
+end
+Campaign.testregion.minLat = global_meta.attributes(n).value;
+for n= 1:length(global_meta.attributes)
+    if strcmpi(global_meta.attributes(n).name,'geospatial_lat_max')==1
+        break
+    end
+end
+Campaign.testregion.maxLat = global_meta.attributes(n).value;
+for n= 1:length(global_meta.attributes)
+    if strcmpi(global_meta.attributes(n).name,'geospatial_lon_min')==1
+        break
+    end
+end
+Campaign.testregion.minLon = global_meta.attributes(n).value;
+for n= 1:length(global_meta.attributes)
+    if strcmpi(global_meta.attributes(n).name,'geospatial_lon_max')==1
+        break
+    end
+end
+Campaign.testregion.maxLon = global_meta.attributes(n).value;
+%... test (glider) region bndrys vector:
+tmpryTest = [Campaign.testregion.minLat,Campaign.testregion.maxLat,Campaign.testregion.minLon,Campaign.testregion.maxLon];
+
+% 2b) background data location:
+for n=1:length(FLDS)
+    bgrndRegions.(FLDS{n}).lat_min = min(min(CTD.(FLDS{n}).latitude));
+    bgrndRegions.(FLDS{n}).lat_max = max(max(CTD.(FLDS{n}).latitude));
+    bgrndRegions.(FLDS{n}).lon_min = min(min(CTD.(FLDS{n}).longitude));
+    bgrndRegions.(FLDS{n}).lon_max = max(max(CTD.(FLDS{n}).longitude));
+end
+counter=1;
+for n=1:length(FLDS)
+    tmpry(counter,:) = [bgrndRegions.(FLDS{n}).lat_min,bgrndRegions.(FLDS{n}).lat_max,bgrndRegions.(FLDS{n}).lon_min,bgrndRegions.(FLDS{n}).lat_max];
+    counter=counter+1;
+end
+%%%% 2c) Find, for each boundary constraint,the 10 closest cruise background data
+% boundary cnstraints. (This is not a good way to do the location
+% calculation..., how can we improve it?)
+TMPRY(1,:) = knnsearch(tmpry(:,1),tmpryTest(1),'k',10);
+TMPRY(2,:) = knnsearch(tmpry(:,2),tmpryTest(2),'k',10);
+TMPRY(3,:) = knnsearch(tmpry(:,3),tmpryTest(3),'k',10);
+TMPRY(4,:) = knnsearch(tmpry(:,4),tmpryTest(4),'k',10);
+
+res = [1:length(FLDS); histc(TMPRY(:)', 1:length(FLDS))]';
+sortedres = sortrows(res, -2); % sort by second column, descending
+first10 = sortedres(1:length(FLDS), :); % 8 best matching cruise regions
+clear tmpry
+
+%2d) Test Season:
+[Campaign.testSEASON,~] = SEASON_of_Cruise(Campaign,'GLIDER',STARTdate);
+%... & test year:
+Campaign.testYEAR = str2double(datestr(STARTdate,'yyyy'));
+%... & test start date:
+Campaign.STARTdate = (datestr(STARTdate,'dd-mmm-yyyy'));
+
+% 2e) background data Season... & background data year.... & background daa start date:
+for n=1:length(FLDS)
+    [bgrndRegions.(FLDS{n}).SEASON,bgrndRegions.(FLDS{n}).MNTHS] = SEASON_of_Cruise([],'GLIDER',CTD.(FLDS{n}).timeUTC(CTD.(FLDS{n}).sciTime==min(CTD.(FLDS{n}).sciTime)));
+    bgrndRegions.(FLDS{n}).YR = str2double(datestr(CTD.(FLDS{n}).timeUTC(CTD.(FLDS{n}).sciTime==min(CTD.(FLDS{n}).sciTime)),'yyyy'));
+    bgrndRegions.(FLDS{n}).STARTdate = (datestr(CTD.(FLDS{n}).timeUTC(CTD.(FLDS{n}).sciTime==min(CTD.(FLDS{n}).sciTime)),'dd-mmm-yyyy'));
+end
+
+% 2f) Glider test data: establish which variables to use for the correction:
+if isfield(data,'salinity_corrected_thermal')==1
+    TESTdat.S    = data.salinity_corrected_thermal;                     % we use salinity corrected thermal, which has been derived from a conductivity which is corrected using a corrected temperature
+    TESTdat.T    = data.temperature;                                    % the thermal lag corrected salinity is the correction required for the salinity to "match" the in situ temperature, so we use temperature and not the thermal lag corrected temperature 
+    TESTdat.Tcor = data.temperature_corrected_thermal;                  % this is te value that was created to help derive a salinity corrected thermal, but should not be used in conjunction with salinity_corrected_thermal
+    TESTdat.C_orig    = data.conductivity;                              % this is the in-situ conductivity
+    TESTdat.C    = gsw_C_from_SP(TESTdat.S,TESTdat.T,data.pressure);    % we back-derive conductivity from the corrected salinity and in-situ temperature in order to get a thermal lag corrected salinity
+    metC = meta.conductivity;
+    metS = meta.salinity_corrected_thermal;
+else
+    TESTdat.S = data.salinity;
+    TESTdat.T = data.temperature;
+    TESTdat.C = data.conductivity;
+    metC = meta.conductivity;
+end 
+for n= 1:length(metC.attributes)
+    if strcmpi(metC.attributes(n).name,'units')==1
+        break
+    end
+end
+if strcmpi(metC.attributes(n).name,'units')==1 && strcmpi(metC.attributes(n).value,'S m-1')==1 && isfield(TESTdat,'C_orig')==0
+    TESTdat.C = TESTdat.C.*10;
+elseif strcmpi(metC.attributes(n).name,'units')==1 && strcmpi(metC.attributes(n).value,'S m-1')==1 && isfield(TESTdat,'C_orig')==1
+    TESTdat.C_orig = TESTdat.C_orig.*10;
+end
+
+Campaign.testregion.maxLon = global_meta.attributes(n).value;
+if strcmp(Campaign.Test,'dep0006_ideep02_ime-sldeep002_L1_2015-03-16_data_dt')==0
+    TESTdat.Pr = data.pressure;
+else
+    %%%% this was a bad pressure mission - need to set up a spreadsheet
+    %%%% that keeps track if this occurence...
+    TESTdat.Pr = data.pressure + 2.951;
+    TESTdat.S  = sw_salt(TESTdat.C*(10 /sw_c3515()), TESTdat.T, TESTdat.Pr);% Conductivity from sw_c3515 is in mS/cm,
+    disp('Salinity is recalculated after pressure adjustment using conductivity, adjusted pressure and adjusted temp inside the cell (thermal lag correction)'); 
+end
+TESTdat.PT      = sw_ptmp(TESTdat.S,TESTdat.T,TESTdat.Pr,0);
+if isfield(data,'time_ctd')
+    TESTdat.timeNUM = data.time_ctd/(60*60*24)  + datenum(1970,1,1,0,0,0); 
+else
+    TESTdat.timeNUM  = data.time/(60*60*24)  + datenum(1970,1,1,0,0,0) ; % sciTime to matlab time
+end
+TESTdat.Lat     = data.latitude;
+TESTdat.Lon     = data.longitude;
+% remove nans:
+r = isnan(TESTdat.S)==1 | isnan(TESTdat.T)==1 | isnan(TESTdat.PT)==1 | isnan(TESTdat.C)==1 | isnan(TESTdat.Pr)==1;
+FLDtest = fieldnames(TESTdat);
+for n1 = 1:length(FLDtest)
+    TESTdat.(FLDtest{n1})(r) = [];
+end
+clear r
+TESTdat.timeUTC = (datestr(TESTdat.timeNUM,'mmm dd yyyy HH:MM:SS'));
+
+%clear data
+
+% 2g) Create TS diagram of all background ship data, with the uncorrected
+% glider data on top:
+depNUM_glider = strsplit(Campaign.Test,'-');
+depNUM_glider = depNUM_glider{1};
+TSdiags_from_Struct(1,0,TESTdat,depNUM_glider)
+
+% 2h) Use date and time and options in matching_cruise_recommendation.m to
+% provide recomendations and options for selecting background cruise data
+% for correction application.
+TYPE = 'GLIDER';
+[Campaign,~] = Matching_Cruise_recommendation(Campaign,TYPE,bgrndRegions,first10);
+
+expression = 'dep(\d{4})_socibrv_scbsbe900\d{1}_(\d{8})';
+for n=1:length(Campaign.COMP)
+%     x = strsplit(Campaign.COMP{n},'_');
+%     x2 = regexpi(x,'dep');
+    [tok,matchStr] = regexp(Campaign.COMP{n},expression, 'tokens', 'tokenExtents');
+    Campaign.DEP{n,1} = tok{1,1}{1,1};
+    Campaign.DATE{n,1} = tok{1,1}{1,2};
+%     n2=1;
+%     while isempty(x2{n2})==1
+%         n2=n2+1;
+%     end
+%     Campaign.DEP{n,1} = x{n2};
+%     clear n2 x2
+%     x2 = regexpi(x,'L1');
+%     n2=1;
+%     while isempty(x2{n2})==1
+%         n2=n2+1;
+%     end
+%     Campaign.DATE{n,1} = datestr(strjoin(x(n2+1:end)));
+%     clear n2 x2 x
+end
+        
+% 2i) plot these cruises onto the map earlier - check how well the campaign
+% paths match up, and the dates of the campaigns. If they're good enough,
+% move on, else, recall the above "matching_cruise_recommendation" function.
+figure(mine)
+% Include Mallorca Channel data?
+buttonMC = questdlg('Remove data from the Mallorca Channel?','Remove Mallorca Channel?','YES','NO','YES');
+
+m_text(-4.5,41.5,{['---  ',strrep(Campaign.Test,'_','-')]},'linestyle','-','edgecolor','k','color','k','fontweight','b','fontsize',12,'backgroundcolor',[0.5,0.5,0.5])
+x=41.2;
+CC = colormap(jet(length(Campaign.COMP)));
+hold on
+for n=1:length(Campaign.COMP)
+%     plotm(CTD.([Campaign.COMP{n},'_corrected_halfmetreBINs']).latitude,CTD.([Campaign.COMP{n},'_corrected_halfmetreBINs']).longitude,'-*','linewidth',2,'color',CC(n,:));
+   % plotm(CTD.([Campaign.COMP{n}]).latitude,CTD.([Campaign.COMP{n}]).longitude,'-*','linewidth',2,'color',CC(n,:));
+   m_plot(CTD.([Campaign.COMP{n}]).longitude,CTD.([Campaign.COMP{n}]).latitude,'-*','linewidth',2,'color',CC(n,:));
+    m_text(-4.5,x,{['---  ',strrep(Campaign.COMP{n},'_','-')]},'linestyle','-','edgecolor','k','color',CC(n,:),'fontweight','b','fontsize',12,'backgroundcolor',[0.5,0.5,0.5])
+    x=x-0.3;
+end
+clear x
+
+%******************************************************************************************************************************************************************************
+%% 3. WHITESPACE MAXIMISATION METHOD FOR CORRECTING GLIDER DATA: 
+%       create vectors of background data using the chosen data from the previous step: an iterative process tests correction coefficients that allow the test (glider)
+%       data to align with the background data in a TS diagram - the iterative procedure stops at the point at which the whitespace area of the TSdiagram is maximised. 
+
+% 3a) bckgrnd comparison data for the whitespace maximisation correction method; combine and rearrange into a structure of vectors:
+counter=1;
+for n1=1:length(Campaign.COMP)
+    if length(Campaign.COMP)==1
+        XX = Campaign.COMP;
+        XX=XX{1};
+    else
+        XX = Campaign.COMP{n1};
+    end
+    if isfield(CTD.(XX).Corrected,'SALT_01')==1 && isfield(CTD.(XX).Corrected,'SALT_02')==1
+        ii=1:length(CTD.(XX).latitude);%find(CTD.(XX).longitude>2); %for Mallorca Channel only! 
+        tmpry.S       = [reshape(CTD.(XX).Corrected.SALT_01(:,ii),[],1);reshape(CTD.(XX).Corrected.SALT_02(:,ii),[],1)];
+        tmpry.T       = [reshape(CTD.(XX).t090C(:,ii),[],1);reshape(CTD.(XX).t190C(:,ii),[],1)];
+        tmpry.PT      = [reshape(CTD.(XX).Corrected.ptemp_01(:,ii),[],1);reshape(CTD.(XX).Corrected.ptemp_02(:,ii),[],1)];
+        tmpry.C       = [reshape(CTD.(XX).Corrected.COND_01(:,ii),[],1);reshape(CTD.(XX).Corrected.COND_02(:,ii),[],1)];
+        tmpry.Pr      = [reshape(CTD.(XX).Pressure(:,ii),[],1);reshape(CTD.(XX).Pressure(:,ii),[],1)];
+        tmpry.timeUTC = [reshape(repmat(CTD.(XX).timeUTC(ii),size(CTD.(XX).Pressure(:,ii),1),1),[],1);reshape(repmat(CTD.(XX).timeUTC(ii),size(CTD.(XX).Pressure(:,ii),1),1),[],1)];
+        tmpry.Station = [reshape(repmat(CTD.(XX).Station(ii),size(CTD.(XX).Pressure(:,ii),1),1),[],1);reshape(repmat(CTD.(XX).Station(ii),size(CTD.(XX).Pressure(:,ii),1),1),[],1)];
+        tmpry.Lat     = [reshape(repmat(CTD.(XX).latitude(ii),size(CTD.(XX).Pressure(:,ii),1),1),[],1);reshape(repmat(CTD.(XX).latitude(ii),size(CTD.(XX).Pressure(:,ii),1),1),[],1)];
+        tmpry.Lon     = [reshape(repmat(CTD.(XX).longitude(ii),size(CTD.(XX).Pressure(:,ii),1),1),[],1);reshape(repmat(CTD.(XX).longitude(ii),size(CTD.(XX).Pressure(:,ii),1),1),[],1)];
+        bgrndDAT.S(counter:(counter-1+length(tmpry.S)),1)       = tmpry.S;
+        bgrndDAT.T(counter:(counter-1+length(tmpry.T)),1)       = tmpry.T;
+        bgrndDAT.PT(counter:(counter-1+length(tmpry.T)),1)      = tmpry.PT;
+        bgrndDAT.C(counter:(counter-1+length(tmpry.T)),1)       = tmpry.C;
+        bgrndDAT.Pr(counter:(counter-1+length(tmpry.T)),1)      = tmpry.Pr;
+        bgrndDAT.timeUTC(counter:(counter-1+length(tmpry.T)),1) = tmpry.timeUTC;
+        bgrndDAT.Station(counter:(counter-1+length(tmpry.T)),1) = tmpry.Station;
+        bgrndDAT.Lat(counter:(counter-1+length(tmpry.T)),1)     = tmpry.Lat;
+        bgrndDAT.Lon(counter:(counter-1+length(tmpry.T)),1)     = tmpry.Lon;
+        counter=counter+length(tmpry.S)+1;
+    end
+    clear XX ii tmpry
+end
+
+% if we remove data from the Mallorca Channel:
+if strcmpi(buttonMC,'YES')==1
+    % replace data with nans for ship data:
+    r = find(bgrndDAT.Lon>1.5);
+    flds = fieldnames(bgrndDAT);
+    for n=1:length(flds)
+        if iscell(bgrndDAT.(flds{n}))==0
+            bgrndDAT.(flds{n})(r) = nan;
+        end
+    end
+    clear r 
+    %replace data with nans for glider data:
+    r = find(TESTdat.Lon>1.5);
+    flds = fieldnames(TESTdat);
+    for n=1:length(flds)
+        if iscell(TESTdat.(flds{n}))==0
+            TESTdat.(flds{n})(r) = nan;
+        end
+    end
+    clear r   
+end
+% remove nans:
+r = isnan(bgrndDAT.S)==1 | isnan(bgrndDAT.T)==1 |...
+    isnan(bgrndDAT.PT)==1 | isnan(bgrndDAT.C)==1 |...
+    isnan(bgrndDAT.Pr)==1 | bgrndDAT.C==0;
+FLDbgnd = fieldnames(bgrndDAT);
+for n1 = 1:length(FLDbgnd)
+    bgrndDAT.(FLDbgnd{n1})(r) = [];
+end
+clear r tmpry
+
+
+% 3b) CREATE TS DIAG OF DATA TO JUDGE IF BACKGROUND DATA IS SENSIBLE, AND
+% WHAT AXES LIMITS TO USE FOR WHITESPACE CORRECTION:
+disp(Campaign.COMP)
+tmpry = strjoin(Campaign.COMP.');
+msgbox(['Select the following background data cruise for TS diagram: displayed in the Command Window (Campaign.COMP): ',tmpry])
+clear tmpry
+pause
+TSdiags_from_Struct(1,0,TESTdat,depNUM_glider)
+TSdiags_from_Struct(1,0,TESTdat,depNUM_glider)
+
+% 3c) Choose axis limits of the TSdiagram for the whitespace maximisation method:
+AXISlims.xMin = 38.48;
+AXISlims.xMax = 38.6;
+AXISlims.yMin = 12.8;
+AXISlims.yMax = 13.8;%28:-2:14;
+disp(AXISlims)
+buttonAXIS = questdlg('Do you wish to alter the default axis limits for the whitespace correction?','Axis limits','YES','NO','NO');
+if strcmpi(buttonAXIS,'YES')==1
+    prompt = {'Adjust temperature min?','Adjust temperature max?','Adjust salinity min?','Adjust salinity max?'};
+    dlg_title = 'Data range for iteration';
+    num_lines = 1;
+    defaultans = {num2str(AXISlims.yMin),num2str(AXISlims.yMax),num2str(AXISlims.xMin),num2str(AXISlims.xMax)};
+    answer = inputdlg(prompt,dlg_title,num_lines,defaultans);
+    %LIMIT BY RANGES:
+    AXISlims.yMin = str2double(answer{1});
+    AXISlims.yMax = str2double(answer{2});
+    AXISlims.xMin = str2double(answer{3});
+    AXISlims.xMax = str2double(answer{4});
+end
+
+% 3d) now for the whitespace correction: find correction by calculating whitespace area in a figure, and finding the maximum 
+%     whitespace area through shifting the test campaign data to the left/right, i.e. when the curves are most coincident 
+%     The std of the results provides a basic error estimate.
+init_guess  = [0.9999,1,1.0001]; % initial guess of correction coeff, so starts at 1 as in  condGliderAdj =  A * condGlider from which we make out steps to find the solution;
+step_major  = 0.0001; % initial solution search step
+step_minor  = 0.00001; % second solution search step and level of accuracy (could increase this with more steps)
+max_iterations  = 100; % nominal number of steps if more than this we have a problem
+step_miniscule = 0.000001;  % third solution search step and level of accuracy (could increase this with more steps)
+if exist([FigsPname_out,Campaign.Test,'_V1/WHITESPACE'],'dir')~=7
+    mkdir([FigsPname_out ,Campaign.Test,'_V1/WHITESPACE'])
+end
+imageDir = [FigsPname_out,Campaign.Test,'_V1/WHITESPACE/'];
+% calls function optim3steps for the whitespace maximisation correction
+% method:
+disp(['initial guess for A is: ', num2str(init_guess)])
+disp(['A', ' Area', ' Difference'])
+for n=1:length(init_guess)
+    disp(['INITIAL VALUE = ',num2str(init_guess(n))])
+    [TSrange.guess(n), TSrange.value(n), TSrange.iterations(n)] = optim3steps(@imageArea_V2, init_guess(n), step_major, step_minor, step_miniscule, max_iterations,...
+        TESTdat.C, TESTdat.T, TESTdat.Pr, TESTdat.PT, bgrndDAT.S, bgrndDAT.PT, imageDir,AXISlims,n);
+    disp(['FINAL VALUE = ',num2str(TSrange.guess(n))])
+end
+ 
+% 3e) Plots TS diagrams of the background data and the "corrected" test
+% (glider) data as a result of the three different initial_guess values in
+% step 3d. Asks the user to decide which provides the best correction
+% coeficient:
+scrsz = get(0,'ScreenSize');
+figure('Position',[50 50 scrsz(3)-100 scrsz(4)-200]);
+subplot(1,3,1)
+plot(gsw_SP_from_C((TSrange.guess(1)*TESTdat.C),TESTdat.T,TESTdat.Pr),TESTdat.PT,'.r','markersize',3)
+grid on; hold on; set(gca,'fontsize',14,'fontweight','b')
+plot(bgrndDAT.S,bgrndDAT.PT,'.k','markersize',3)
+axis([AXISlims.xMin,AXISlims.xMax,12.9,13.6])
+title(['Guess 1 = ',(sprintf('%0.8f',TSrange.guess(1)))],'fontsize',14,'fontweight','b')
+subplot(1,3,2)
+plot(gsw_SP_from_C((TSrange.guess(2)*TESTdat.C),TESTdat.T,TESTdat.Pr),TESTdat.PT,'.r','markersize',3)
+grid on; hold on; set(gca,'fontsize',14,'fontweight','b')
+plot(bgrndDAT.S,bgrndDAT.PT,'.k','markersize',3)
+axis([AXISlims.xMin,AXISlims.xMax,12.9,13.6])
+title(['Guess 2 = ',sprintf('%0.8f',TSrange.guess(2))],'fontsize',14,'fontweight','b')
+subplot(1,3,3)
+plot(gsw_SP_from_C((TSrange.guess(3)*TESTdat.C),TESTdat.T,TESTdat.Pr),TESTdat.PT,'.r','markersize',3)
+grid on; hold on; set(gca,'fontsize',14,'fontweight','b')
+plot(bgrndDAT.S,bgrndDAT.PT,'.k','markersize',3)
+axis([AXISlims.xMin,AXISlims.xMax,12.9,13.6])
+title(['Guess 3 = ',sprintf('%0.8f',TSrange.guess(3))],'fontsize',14,'fontweight','b')
+% Choose best result:
+%input_sensor=n;
+buttonGUESS = questdlg('Which guess do we use?','Guess value to use','Guess 1','Guess 2', 'Guess 3','Guess 2');
+if strcmpi(buttonGUESS,'Guess 1')==1
+    GUESS = TSrange.guess(1);
+elseif strcmpi(buttonGUESS,'Guess 2')==1
+    GUESS = TSrange.guess(2);
+elseif strcmpi(buttonGUESS,'Guess 3')==1
+    GUESS = TSrange.guess(3);
+end
+
+%******************************************************************************************************************************************************************************
+%% 4. CREATE AND SAVE MAT FILE WITH CORRECTED SALINITY AND CONDUCTIVITY, AND CORRESPONDING METADATA DETAILING THE CORRECTION COEFFICIENT, ERROR ESTIMATE, AND SUMMARY OF CORRECTION METHOD. 
+%       PLOT FINAL TSdiagrams WITH UNCORRECTED AND CORRECTED GLIDER DATA
+%       OVER THE TOP OF CORRECTED SHIP (BACKGROUND) DATA.
+
+% 4.a) Correction coefficients, and corrected conductivity, salinity and
+% potential temperature:
+TESTdat.Corr.A  = GUESS;
+TESTdat.Corr.C  = GUESS.*TESTdat.C;
+TESTdat.Corr.S  = gsw_SP_from_C(TESTdat.Corr.C,TESTdat.T,TESTdat.Pr);   %sw_salt(TESTdat.Corr.C *(10 / sw_c3515()),TESTdat.T,TESTdat.Pr);%
+TESTdat.Corr.PT = sw_ptmp(TESTdat.Corr.S,TESTdat.T,TESTdat.Pr,0);
+
+% 4.b)Create TS diagrams with uncorrected and corrected glider data over the
+% top of background corrected ship data:
+TSdiags_from_Struct(1,1,TESTdat,depNUM_glider)
+TSdiags_from_Struct(1,1,TESTdat,depNUM_glider)
+
+% 4.c) error estimate of corrected salinity:
+ERROR = inputdlg('Provide error estimate:','error estimate',1,{'0.01'});
+TESTdat.Corr.Error = str2double(ERROR);
+
+    
+% 4.d) Providing information for metadata:
+TESTdat.metaCorr.A = TESTdat.Corr.A;
+TESTdat.metaCorr.ErrorEst = str2double(ERROR{1});
+TESTdat.metaCorr.CorrectionSummaryMethod  = 'whitespace area maximisation of a Theta-S diagram comparison, between glider data and other nearby (in time and space) cruises was employed';
+TESTdat.metaCorr.Calibration_equation = 'COND_CORR=A*COND_01';
+TESTdat.metaCorr.CorrectionSummaryREPORT  = 'For further details, refer to report...TBC';
+TESTdat.metaCorr.CorrectionSummaryGLIDERREPORT  = 'http://www.socib.es/?seccion=gliderPage&facility=gliderReports';
+for n = 1:length(Campaign.DEP)
+    x{n} = strjoin([num2str(n),')',Campaign.DEP(n),Campaign.DATE(n)]);
+end
+TESTdat.metaCorr.CorrectionSummaryBGRNDdata  = strjoin(['Background comparison Cruises used:', x]); clear x
+TESTdat.metaCorr.CorrectionSummaryERRORestimate  = 'error estimate is based on the range of salinity values of the comparison cruises at about 13�C (i.e. at the tail end of the deepest values on the Theata-S diagram)';
+TESTdat.metaCorr.CorrectionSummaryWHTSPACE = ['Salinity: ',num2str(AXISlims.xMin),' to ', num2str(AXISlims.xMax),', Temperature: ',num2str(AXISlims.yMin),' to ', num2str(AXISlims.yMax), '�C'];
+
+save([Pname_out,Fname_out],'TESTdat')
+
+% 4.f) Create netcdf file of the meta data for corrected conductivity and
+% salinity (to go to the data centre):
+%nccreate([Pname_outMeta,Campaign.Test,'_CORR'],'name',gliderDataFilename)
+nccreate([Pname_outMeta,Campaign.Test,'_CORR'],'COND_CORR','Dimensions',{'time',inf})
+ncwrite([Pname_outMeta,Campaign.Test,'_CORR'],'COND_CORR',TESTdat.Corr.C);
+ncwriteatt([Pname_outMeta,Campaign.Test,'_CORR'],'COND_CORR','observation_type','corrected_measurements')
+if isfield(data,'salinity_corrected_thermal')==1
+    ncwriteatt([Pname_outMeta,Campaign.Test,'_CORR'],'COND_CORR','conductivity_Thermal_CORR_used','YES')
+else
+    ncwriteatt([Pname_outMeta,Campaign.Test,'_CORR'],'COND_CORR','conductivity_Thermal_CORR_used','NO, unavailable')
+end
+ncwriteatt([Pname_outMeta,Campaign.Test,'_CORR'],'COND_CORR','CorrectionCoefficient_A',TESTdat.metaCorr.A)
+ncwriteatt([Pname_outMeta,Campaign.Test,'_CORR'],'COND_CORR','Calibration_Equation',TESTdat.metaCorr.Calibration_equation)
+ncwriteatt([Pname_outMeta,Campaign.Test,'_CORR'],'COND_CORR','Salinity_error_estimate',TESTdat.metaCorr.ErrorEst)
+ncwriteatt([Pname_outMeta,Campaign.Test,'_CORR'],'COND_CORR','Summary_Method', TESTdat.metaCorr.CorrectionSummaryMethod)
+ncwriteatt([Pname_outMeta,Campaign.Test,'_CORR'],'COND_CORR','Summary_Method_error_estimate', TESTdat.metaCorr.CorrectionSummaryERRORestimate)
+ncwriteatt([Pname_outMeta,Campaign.Test,'_CORR'],'COND_CORR','Summary_Method_Report', TESTdat.metaCorr.CorrectionSummaryREPORT)
+if isfield(TESTdat.metaCorr,'CorrectionSummaryGLIDERREPORT') ==1
+    ncwriteatt([Pname_outMeta,Campaign.Test,'_CORR'],'COND_CORR','GLIDER_Report', TESTdat.metaCorr.CorrectionSummaryGLIDERREPORT)
+end
+ncwriteatt([Pname_outMeta,Campaign.Test,'_CORR'],'COND_CORR','Background_data_used_for_correction', TESTdat.metaCorr.CorrectionSummaryBGRNDdata)
+ncwriteatt([Pname_outMeta,Campaign.Test,'_CORR'],'COND_CORR','THETA-SAL-whitespace_for_correction', TESTdat.metaCorr.CorrectionSummaryWHTSPACE)
+nccreate([Pname_outMeta,Campaign.Test,'_CORR'],'SALT_CORR','Dimensions',{'time',inf});
+ncwrite([Pname_outMeta,Campaign.Test,'_CORR'],'SALT_CORR',TESTdat.Corr.S);
+ncwriteatt([Pname_outMeta,Campaign.Test,'_CORR'],'SALT_CORR','observation_type','corrected_derived_from_COND_CORR')
+ncwriteatt([Pname_outMeta,Campaign.Test,'_CORR'],'SALT_CORR','Summary_details','Refer to meta.COND_CORR.attributes')
+
+nccreate([Pname_outMeta,Campaign.Test,'_CORR'],'TEMP_CORR','Dimensions',{'time',inf});
+ncwrite([Pname_outMeta,Campaign.Test,'_CORR'],'TEMP_CORR',TESTdat.T);
+ncwriteatt([Pname_outMeta,Campaign.Test,'_CORR'],'TEMP_CORR','observation_type','corrected_measurements')
+ncwriteatt([Pname_outMeta,Campaign.Test,'_CORR'],'TEMP_CORR','Summary_details','At this stage, TEMP_CORR is the same as original temperature. This section will be updated if de-spiking is required')
+
+ncwriteatt([Pname_outMeta,Campaign.Test,'_CORR'],'/','name',gliderDataFilename{1});
+ncdisp([Pname_outMeta,Campaign.Test,'_CORR'],'/');
+
+disp(Campaign.COMP)
+disp(AXISlims)
+format long
+disp(TESTdat.Corr.A)
+disp(ERROR)
