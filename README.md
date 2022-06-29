@@ -21,7 +21,7 @@ The following libraries need to be added into salinity-correction-toolbox/ext/ d
 
 
 ## Legacy
-This toolbox is based on the previous code developed at SOCIB by Dr Krissy Reeve and Dr John T. Allen. 
+This toolbox is based on the previous code developed at SOCIB by Dr Krissy Reeve, Dr John T. Allen, Cristian Munoz and Dr Matteo Marasco. 
 
 ## Copyright
 
