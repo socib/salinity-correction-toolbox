@@ -1,0 +1,53 @@
+{
+    "_class": "Software",
+    "alias": "https://github.com/socib/salinity-correction-toolbox",
+    "abstract": "MATLAB/Octave scripts to perform delayed mode salinity corrected advanced data.",
+    "author": {
+        "_class": "Organization",
+        "alias": "https://edmo.seadatanet.org/report/3410"
+    },
+    "contributor": [
+        {
+            "_class": "Person",
+            "name": "Cristian Munoz <cristian.munoz.mas@hi.no>"
+        },
+        {
+            "_class": "Person",
+            "name": "John Allen <jallen@socib.es >"
+        },
+        {
+            "_class": "Person",
+            "name": "Matteo Marasco <mmarasco@socib.es >"
+        },
+        {
+            "_class": "Person",
+            "name": "Miguel Charcos <mcharcos@socib.es>"
+        }
+    ],
+    "description": "The salinity toolbox is a set of MATLAB/Octave scripts and functions developed at SOCIB to perform delayed mode salinity corrected advanced data.",
+    "distribution": {
+        "_class": "Distribution",
+        "accessURL": "https://github.com/socib/salinity-correction-toolbox"
+    },
+    "downloadURL": "https://github.com/socib/salinity-correction-toolbox/archive/refs/heads/master.zip",
+    "keywords": ["matlab","netcdf","octave","physical-oceanography","ocean-sciences","seaglider","data-preservation","salinity-correction-toolbox","slocum","seaexplorer","socib","glider"],
+    "language": ["English"],
+    "license": "Copyright (C) 2013-2018 ICTS SOCIB - Servei d'observació i predicció costaner de les Illes Balears http://www.socib.es\n\nThis program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.\n\nThis program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.\n\nYou should have received a copy of the GNU General Public License along with this program. If not, see http://www.gnu.org/licenses/.",
+    "modified": "2019-11-14",
+    "name": "SOCIB salinity correction toolbox",
+    "organization": {
+        "_class": "Organization",
+        "alias": "https://edmo.seadatanet.org/report/3410"
+    },
+    "owner": {
+        "_class": "Organization",
+        "alias": "https://edmo.seadatanet.org/report/3410"
+    },
+    "publisher": {
+        "_class": "Organization",
+        "alias": "https://edmo.seadatanet.org/report/3410"
+    },
+    "programming_language": ["MATLAB", "M", "C", "Other"],
+    "url": "https://github.com/socib/salinity-correction-toolbox",
+    "version": "v1.0"
+}
